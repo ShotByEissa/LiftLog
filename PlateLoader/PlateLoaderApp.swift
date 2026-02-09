@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct LiftLogApp: App {
+struct PlateLoaderApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()

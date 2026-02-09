@@ -36,7 +36,7 @@ struct SetupFlowView: View {
                 Divider()
                 footerControls
             }
-            .navigationTitle("LiftLog Setup")
+            .navigationTitle("PlateLoader Setup")
             .navigationBarTitleDisplayMode(.inline)
             .alert("Setup Error", isPresented: Binding(
                 get: { errorMessage != nil },

@@ -1,10 +1,10 @@
-# LiftLog (iOS 26, Offline, SwiftUI + SwiftData)
+# PlateLoader (iOS 26, Offline, SwiftUI + SwiftData)
 
 Minimal offline weightlifting logger.
 
 ## Run
-1. Open `/Users/shotbyeissa/Documents/19. Im gonna code shit/Sickazzzz Coding/LiftLog/LiftLog.xcodeproj` in Xcode.
-2. Select the `LiftLog` target and an iOS Simulator/device running iOS 26 or later.
+1. Open `/Users/shotbyeissa/Documents/19. Im gonna code shit/Sickazzzz Coding/LiftLog/PlateLoader.xcodeproj` in Xcode.
+2. Select the `PlateLoader` target and an iOS Simulator/device running iOS 26 or later.
 3. Build and run.
 
 ## Scope
