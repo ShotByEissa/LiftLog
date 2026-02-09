@@ -30,6 +30,13 @@ private struct MainTabView: View {
             }
 
             NavigationStack {
+                TrendsView()
+            }
+            .tabItem {
+                Label("Trends", systemImage: "chart.line.uptrend.xyaxis")
+            }
+
+            NavigationStack {
                 HistoryView(splitPlan: splitPlan)
             }
             .tabItem {

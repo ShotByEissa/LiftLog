@@ -50,7 +50,7 @@ Minimal offline weightlifting logger.
   - `setNumber`
   - `reps`
   - `loadValue`, `loadUnit` (dumbbell/machine)
-  - `perSidePlates`, `barWeightValueSnapshot`, `barWeightUnitSnapshot`, `computedTotalValue`, `computedTotalUnit` (barbell)
+  - `perSidePlates`, `barWeightValueSnapshot`, `barWeightUnitSnapshot`, `computedTotalValue`, `computedTotalUnit` (barbell/plate-loaded)
 - `PlateOption`
   - `id`
   - `value`
@@ -64,6 +64,7 @@ Minimal offline weightlifting logger.
 - First-run setup (split length, week/day labels, barbell defaults + plate catalog)
 - Workout Day (week/day selector, ordered workouts, add/rename/delete/reorder)
 - Add Workout
-- Log Workout (fast set entry + copy last set + barbell plate picker + Done save)
+- Log Workout (fast set entry + copy last set + barbell/plate-loaded plate picker + Done save)
 - History (week/day filter, session list, read-only detail)
+- Trends (one card per workout, toggle graph metric between peak weight and peak reps; x-axis is workout run count)
 - Settings (edit split plan, edit barbell defaults, factory reset)

@@ -24,7 +24,7 @@ struct SessionDetailView: View {
                             Text("Set \(set.setNumber)")
                                 .font(.headline)
 
-                            if entry.weightTypeSnapshot == .barbell {
+                            if entry.weightTypeSnapshot.usesPlatePicker {
                                 if let total = set.computedTotalValue, let unit = set.computedTotalUnit {
                                     Text("Total: \(total.prettyWeight) \(unit.rawValue)")
                                 }

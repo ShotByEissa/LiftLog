@@ -14,6 +14,7 @@ struct LogWorkoutView: View {
     @State private var currentUnit: WeightUnit
     @State private var sessionDate: Date = .now
     @State private var errorMessage: String?
+    @State private var didLoadPreviousValues = false
 
     init(workout: WorkoutTemplate, dayPlan: DayPlan, weekIndex: Int, appConfig: AppConfig) {
         self.workout = workout
@@ -24,7 +25,7 @@ struct LogWorkoutView: View {
         let plateIDs = appConfig.plateCatalog
             .filter { $0.unit == appConfig.barWeightUnit }
             .map(\.id)
-        _setDrafts = State(initialValue: [SetDraft.makeDefault(for: workout.weightType, plateOptionIDs: plateIDs)])
+        _setDrafts = State(initialValue: [SetDraft.makeDefault(plateOptionIDs: plateIDs)])
         _currentUnit = State(initialValue: workout.preferredUnit)
     }
 
@@ -40,7 +41,7 @@ struct LogWorkoutView: View {
                 }
             }
 
-            if workout.weightType != .barbell {
+            if !workout.weightType.usesPlatePicker {
                 Section("Unit") {
                     Picker("Unit", selection: $currentUnit) {
                         ForEach(WeightUnit.allCases) { unit in
@@ -53,8 +54,8 @@ struct LogWorkoutView: View {
 
             Section("Sets") {
                 ForEach(setDrafts.indices, id: \.self) { index in
-                    if workout.weightType == .barbell {
-                        barbellSetRow(index: index)
+                    if workout.weightType.usesPlatePicker {
+                        platePickerSetRow(index: index)
                     } else {
                         numericSetRow(index: index)
                     }
@@ -88,12 +89,19 @@ struct LogWorkoutView: View {
         } message: {
             Text(errorMessage ?? "Unknown error")
         }
+        .onAppear {
+            loadMostRecentEntryIfAvailable()
+        }
     }
 
     private var filteredPlateOptions: [PlateOption] {
         appConfig.plateCatalog
             .filter { $0.unit == appConfig.barWeightUnit }
             .sorted { $0.value > $1.value }
+    }
+
+    private var basePlateWeight: Double {
+        workout.weightType == .barbell ? max(0, appConfig.barWeightValue) : 0
     }
 
     private func numericSetRow(index: Int) -> some View {
@@ -129,7 +137,7 @@ struct LogWorkoutView: View {
         .padding(.vertical, 4)
     }
 
-    private func barbellSetRow(index: Int) -> some View {
+    private func platePickerSetRow(index: Int) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Set \(index + 1)")
                 .font(.headline)
@@ -178,7 +186,7 @@ struct LogWorkoutView: View {
 
     private func addSet() {
         let plateIDs = filteredPlateOptions.map(\.id)
-        setDrafts.append(SetDraft.makeDefault(for: workout.weightType, plateOptionIDs: plateIDs))
+        setDrafts.append(SetDraft.makeDefault(plateOptionIDs: plateIDs))
     }
 
     private func copyLastSet() {
@@ -203,7 +211,78 @@ struct LogWorkoutView: View {
             let count = Double(plateCount(for: index, plateID: plate.id))
             return partial + (plate.value * count)
         }
-        return max(0, appConfig.barWeightValue) + (2 * perSide)
+        return basePlateWeight + (2 * perSide)
+    }
+
+    private func loadMostRecentEntryIfAvailable() {
+        guard !didLoadPreviousValues else { return }
+        didLoadPreviousValues = true
+
+        do {
+            let descriptor = FetchDescriptor<WorkoutSession>(
+                sortBy: [SortDescriptor(\WorkoutSession.date, order: .reverse)]
+            )
+            let sessions = try modelContext.fetch(descriptor)
+
+            let normalizedName = workout.name
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+
+            guard let previousEntry = sessions.lazy.compactMap({ session in
+                if let exact = session.entries.first(where: { $0.workoutTemplateId == workout.id }) {
+                    return exact
+                }
+
+                return session.entries.first(where: { entry in
+                    let entryName = entry.workoutNameSnapshot
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased()
+                    return entry.weightTypeSnapshot == workout.weightType && entryName == normalizedName
+                })
+            }).first else {
+                return
+            }
+
+            let sortedSets = previousEntry.sets.sorted { $0.setNumber < $1.setNumber }
+            guard !sortedSets.isEmpty else { return }
+
+            let plateOptionIDs = filteredPlateOptions.map(\.id)
+            let defaultCounts = Dictionary(uniqueKeysWithValues: plateOptionIDs.map { ($0, 0) })
+
+            if workout.weightType.usesPlatePicker {
+                let restored: [SetDraft] = sortedSets.map { set in
+                    var counts = defaultCounts
+                    for plate in set.perSidePlates {
+                        guard counts[plate.plateOptionId] != nil else { continue }
+                        counts[plate.plateOptionId] = max(0, plate.countPerSide)
+                    }
+
+                    return SetDraft(
+                        repsText: "\(max(0, set.reps))",
+                        loadText: "",
+                        plateCounts: counts
+                    )
+                }
+                setDrafts = restored
+                return
+            }
+
+            if let savedUnit = sortedSets.compactMap(\.loadUnit).first {
+                currentUnit = savedUnit
+            }
+
+            let restored: [SetDraft] = sortedSets.map { set in
+                let loadText = set.loadValue.map { max(0, $0).prettyWeight } ?? ""
+                return SetDraft(
+                    repsText: "\(max(0, set.reps))",
+                    loadText: loadText,
+                    plateCounts: defaultCounts
+                )
+            }
+            setDrafts = restored
+        } catch {
+            print("Failed to load previous workout values: \(error)")
+        }
     }
 
     private func saveSession() {
@@ -215,7 +294,7 @@ struct LogWorkoutView: View {
         let loggedSets: [LoggedSet] = setDrafts.enumerated().map { index, draft in
             let reps = max(0, Int(draft.repsText) ?? 0)
 
-            if workout.weightType == .barbell {
+            if workout.weightType.usesPlatePicker {
                 let plateCounts: [PlateCount] = filteredPlateOptions.compactMap { option in
                     let count = max(0, draft.plateCounts[option.id] ?? 0)
                     guard count > 0 else { return nil }
@@ -226,7 +305,7 @@ struct LogWorkoutView: View {
                     setNumber: index + 1,
                     reps: reps,
                     perSidePlates: plateCounts,
-                    barWeightValueSnapshot: max(0, appConfig.barWeightValue),
+                    barWeightValueSnapshot: basePlateWeight,
                     barWeightUnitSnapshot: appConfig.barWeightUnit,
                     computedTotalValue: totalForSet(index),
                     computedTotalUnit: appConfig.barWeightUnit
@@ -257,7 +336,7 @@ struct LogWorkoutView: View {
             entries: [entry]
         )
 
-        if workout.weightType != .barbell {
+        if !workout.weightType.usesPlatePicker {
             workout.preferredUnit = currentUnit
         }
 
@@ -278,7 +357,7 @@ private struct SetDraft: Identifiable {
     var loadText: String
     var plateCounts: [UUID: Int]
 
-    static func makeDefault(for weightType: WeightType, plateOptionIDs: [UUID]) -> SetDraft {
+    static func makeDefault(plateOptionIDs: [UUID]) -> SetDraft {
         SetDraft(
             repsText: "",
             loadText: "",

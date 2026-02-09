@@ -5,6 +5,7 @@ enum WeightType: String, Codable, CaseIterable, Identifiable {
     case dumbbell
     case machine
     case barbell
+    case plateLoaded
 
     var id: String { rawValue }
 
@@ -13,7 +14,12 @@ enum WeightType: String, Codable, CaseIterable, Identifiable {
         case .dumbbell: return "Dumbbell"
         case .machine: return "Machine"
         case .barbell: return "Barbell"
+        case .plateLoaded: return "Plate Loaded"
         }
+    }
+
+    var usesPlatePicker: Bool {
+        self == .barbell || self == .plateLoaded
     }
 }
 
