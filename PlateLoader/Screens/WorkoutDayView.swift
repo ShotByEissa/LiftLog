@@ -15,25 +15,22 @@ struct WorkoutDayView: View {
     @State private var renameValue: String = ""
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 10) {
             weekDaySelector
 
             if let dayPlan = currentDayPlan {
-                Text(dayPlan.label)
-                    .font(.largeTitle.bold())
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal)
-
                 workoutList(for: dayPlan)
             } else {
+                Spacer()
                 ContentUnavailableView(
                     "No Day Selected",
                     systemImage: "calendar.badge.exclamationmark",
                     description: Text("Configure this week in Settings to add workout days.")
                 )
+                Spacer()
             }
         }
-        .navigationTitle("Workout Day")
+        .navigationTitle("Workout")
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
                 EditButton()
@@ -43,7 +40,7 @@ struct WorkoutDayView: View {
                 Button {
                     showAddWorkout = true
                 } label: {
-                    Label("Add Workout", systemImage: "plus")
+                    Image(systemName: "plus")
                 }
                 .disabled(currentDayPlan == nil)
             }
@@ -53,6 +50,9 @@ struct WorkoutDayView: View {
                 NavigationStack {
                     AddWorkoutView(dayPlan: dayPlan, defaultUnit: appConfig.barWeightUnit)
                 }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(28)
             }
         }
         .alert("Rename Workout", isPresented: Binding(
@@ -108,51 +108,53 @@ struct WorkoutDayView: View {
         let workouts = dayPlan.activeSortedWorkouts
 
         return List {
-            if workouts.isEmpty {
-                ContentUnavailableView(
-                    "No Workouts",
-                    systemImage: "list.bullet.rectangle",
-                    description: Text("Tap Add Workout to create your first movement for \(dayPlan.label).")
-                )
-            } else {
-                ForEach(workouts, id: \.id) { workout in
-                    NavigationLink {
-                        LogWorkoutView(
-                            workout: workout,
-                            dayPlan: dayPlan,
-                            weekIndex: selectedWeekIndex,
-                            appConfig: appConfig
-                        )
-                    } label: {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(workout.name)
-                                .font(.headline)
-                            Text(workout.weightType.title)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+            Section(dayPlan.label) {
+                if workouts.isEmpty {
+                    ContentUnavailableView(
+                        "No Workouts",
+                        systemImage: "list.bullet.rectangle",
+                        description: Text("Tap + to add your first workout for \(dayPlan.label).")
+                    )
+                } else {
+                    ForEach(workouts, id: \.id) { workout in
+                        NavigationLink {
+                            LogWorkoutView(
+                                workout: workout,
+                                dayPlan: dayPlan,
+                                weekIndex: selectedWeekIndex,
+                                appConfig: appConfig
+                            )
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(workout.name)
+                                    .font(.body)
+                                Text(workout.weightType.title)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            .padding(.vertical, 4)
                         }
-                    }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button("Rename") {
-                            workoutToRename = workout
-                            renameValue = workout.name
-                        }
-                        .tint(.blue)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button("Rename") {
+                                workoutToRename = workout
+                                renameValue = workout.name
+                            }
 
-                        Button("Delete", role: .destructive) {
-                            delete(workout: workout, from: dayPlan)
+                            Button("Delete", role: .destructive) {
+                                delete(workout: workout, from: dayPlan)
+                            }
                         }
                     }
-                }
-                .onMove { source, destination in
-                    moveWorkouts(in: dayPlan, from: source, to: destination)
-                }
-                .onDelete { offsets in
-                    deleteWorkouts(in: dayPlan, offsets: offsets)
+                    .onMove { source, destination in
+                        moveWorkouts(in: dayPlan, from: source, to: destination)
+                    }
+                    .onDelete { offsets in
+                        deleteWorkouts(in: dayPlan, offsets: offsets)
+                    }
                 }
             }
         }
-        .listStyle(.plain)
+        .listStyle(.insetGrouped)
     }
 
     private var currentWeek: PlanWeek? {
