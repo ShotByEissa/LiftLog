@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
+    @AppStorage("profileFirstName") private var profileFirstName: String = ""
 
     var appConfig: AppConfig
     var splitPlan: SplitPlan
@@ -38,6 +39,11 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section("Profile") {
+                TextField("First name", text: $profileFirstName)
+                    .textInputAutocapitalization(.words)
+            }
+
             Section("Split Length") {
                 Stepper("\(splitLengthWeeksDraft) week split", value: $splitLengthWeeksDraft, in: 1...4)
             }

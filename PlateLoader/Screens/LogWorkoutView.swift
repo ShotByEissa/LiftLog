@@ -122,17 +122,9 @@ struct LogWorkoutView: View {
 
                 Text(currentUnit.title)
                     .foregroundStyle(.secondary)
-
-                TextField(
-                    "Reps",
-                    text: Binding(
-                        get: { setDrafts[index].repsText },
-                        set: { setDrafts[index].repsText = $0 }
-                    )
-                )
-                .keyboardType(.numberPad)
-                .textFieldStyle(.roundedBorder)
             }
+
+            repsControl(for: index)
         }
         .padding(.vertical, 4)
     }
@@ -168,20 +160,38 @@ struct LogWorkoutView: View {
                 }
             }
 
-            HStack {
-                Text("Reps")
-                TextField(
-                    "0",
-                    text: Binding(
-                        get: { setDrafts[index].repsText },
-                        set: { setDrafts[index].repsText = $0 }
-                    )
-                )
-                .keyboardType(.numberPad)
-                .textFieldStyle(.roundedBorder)
-            }
+            repsControl(for: index)
         }
         .padding(.vertical, 4)
+    }
+
+    private func repsControl(for setIndex: Int) -> some View {
+        HStack {
+            Text("Reps")
+            Spacer()
+
+            Button {
+                updateReps(for: setIndex, delta: -1)
+            } label: {
+                Image(systemName: "minus.circle.fill")
+                    .font(.title3)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(repsValue(for: setIndex) > 0 ? .primary : .tertiary)
+            .disabled(repsValue(for: setIndex) == 0)
+
+            Text("\(repsValue(for: setIndex))")
+                .monospacedDigit()
+                .frame(minWidth: 28, alignment: .center)
+
+            Button {
+                updateReps(for: setIndex, delta: 1)
+            } label: {
+                Image(systemName: "plus.circle.fill")
+                    .font(.title3)
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     private func addSet() {
@@ -212,6 +222,15 @@ struct LogWorkoutView: View {
             return partial + (plate.value * count)
         }
         return basePlateWeight + (2 * perSide)
+    }
+
+    private func repsValue(for setIndex: Int) -> Int {
+        max(0, Int(setDrafts[setIndex].repsText) ?? 0)
+    }
+
+    private func updateReps(for setIndex: Int, delta: Int) {
+        let next = max(0, repsValue(for: setIndex) + delta)
+        setDrafts[setIndex].repsText = "\(next)"
     }
 
     private func loadMostRecentEntryIfAvailable() {
