@@ -18,7 +18,7 @@ struct SessionDetailView: View {
 
             ForEach(session.entries.indices, id: \.self) { entryIndex in
                 let entry = session.entries[entryIndex]
-                Section(entry.workoutNameSnapshot) {
+                Section(entryTitle(for: entry, at: entryIndex)) {
                     ForEach(entry.sets.sorted(by: { $0.setNumber < $1.setNumber }), id: \.setNumber) { set in
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Set \(set.setNumber)")
@@ -53,6 +53,24 @@ struct SessionDetailView: View {
             }
         }
         .navigationTitle("Session Detail")
+    }
+
+    private func entryTitle(for entry: SessionEntry, at index: Int) -> String {
+        let matchingTotal = session.entries.filter { sameWorkout($0, entry) }.count
+        guard matchingTotal > 1 else { return entry.workoutNameSnapshot }
+
+        let priorMatches = session.entries[..<index].filter { sameWorkout($0, entry) }.count
+        return "\(entry.workoutNameSnapshot) #\(priorMatches + 1)"
+    }
+
+    private func sameWorkout(_ lhs: SessionEntry, _ rhs: SessionEntry) -> Bool {
+        if lhs.workoutTemplateId == rhs.workoutTemplateId {
+            return true
+        }
+
+        let lhsName = lhs.workoutNameSnapshot.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let rhsName = rhs.workoutNameSnapshot.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return lhs.weightTypeSnapshot == rhs.weightTypeSnapshot && lhsName == rhsName
     }
 
     private func plateBreakdown(for loggedSet: LoggedSet) -> String {

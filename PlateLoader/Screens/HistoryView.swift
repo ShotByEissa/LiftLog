@@ -29,7 +29,7 @@ struct HistoryView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(session.date.formatted(date: .abbreviated, time: .shortened))
                                     .font(.headline)
-                                Text(session.dayLabelSnapshot)
+                                Text(sessionSubtitle(for: session))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -89,5 +89,11 @@ struct HistoryView: View {
         if !availableDayPlans.contains(where: { $0.weekday == selectedWeekday }) {
             selectedWeekday = firstDay.weekday
         }
+    }
+
+    private func sessionSubtitle(for session: WorkoutSession) -> String {
+        let workoutCount = max(0, session.entries.count)
+        let noun = workoutCount == 1 ? "workout" : "workouts"
+        return "\(session.dayLabelSnapshot) • \(workoutCount) \(noun)"
     }
 }

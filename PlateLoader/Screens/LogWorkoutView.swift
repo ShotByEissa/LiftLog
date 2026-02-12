@@ -18,6 +18,12 @@ struct LogWorkoutView: View {
     @State private var previousSetBaselines: [PreviousSetBaseline] = []
     @State private var hasPreviousSessionEntry = false
 
+    @State private var isLoggingUnlocked = false
+    @State private var showDiscardChangesAlert = false
+    @State private var showDuplicateChoiceDialog = false
+    @State private var showPlanSyncAlert = false
+    @State private var pendingSaveContext: PendingSaveContext?
+
     init(workout: WorkoutTemplate, dayPlan: DayPlan, weekIndex: Int, appConfig: AppConfig) {
         self.workout = workout
         self.dayPlan = dayPlan
@@ -27,7 +33,11 @@ struct LogWorkoutView: View {
         let plateIDs = appConfig.plateCatalog
             .filter { $0.unit == appConfig.barWeightUnit }
             .map(\.id)
-        _setDrafts = State(initialValue: [SetDraft.makeDefault(plateOptionIDs: plateIDs)])
+        _setDrafts = State(initialValue: SetDraft.plannedDefaults(
+            warmUpCount: workout.plannedWarmUpSetCount,
+            workingCount: workout.plannedWorkingSetCount,
+            plateOptionIDs: plateIDs
+        ))
         _currentUnit = State(initialValue: workout.preferredUnit)
     }
 
@@ -38,15 +48,22 @@ struct LogWorkoutView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(workout.name)
                             .font(.title2.bold())
+
                         Text("\(dayPlan.label) • \(sessionDate.formatted(date: .abbreviated, time: .shortened))")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+
+                        Text(isLoggingUnlocked ? "Logging Enabled" : "Locked")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(isLoggingUnlocked ? .green : .secondary)
                     }
 
                     Spacer(minLength: 8)
 
                     if !workout.weightType.usesPlatePicker {
                         unitDropdownMenu
+                            .opacity(isLoggingUnlocked ? 1 : 0.45)
+                            .allowsHitTesting(isLoggingUnlocked)
                     }
                 }
             }
@@ -58,33 +75,92 @@ struct LogWorkoutView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                ForEach(setDrafts.indices, id: \.self) { index in
-                    if workout.weightType.usesPlatePicker {
-                        platePickerSetRow(index: index)
-                    } else {
-                        numericSetRow(index: index)
+                Group {
+                    ForEach(setDrafts.indices, id: \.self) { index in
+                        if workout.weightType.usesPlatePicker {
+                            platePickerSetRow(index: index)
+                        } else {
+                            numericSetRow(index: index)
+                        }
                     }
-                }
-                .onDelete(perform: deleteSets)
+                    .onDelete(perform: deleteSets)
 
-                Button("Add Set") {
-                    addSet()
-                }
+                    Button("Add Set") {
+                        addSet()
+                    }
 
-                Button("Copy Last Set") {
-                    copyLastSet()
+                    Button("Copy Last Set") {
+                        copyLastSet()
+                    }
+                    .disabled(setDrafts.isEmpty || !isLoggingUnlocked)
                 }
-                .disabled(setDrafts.isEmpty)
+                .disabled(!isLoggingUnlocked)
+                .opacity(isLoggingUnlocked ? 1 : 0.48)
+
+                if !isLoggingUnlocked {
+                    Text("Tap Begin Logging to unlock this workout.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .navigationTitle("Log Workout")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(true)
         .toolbar {
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Done") {
-                    saveSession()
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button {
+                    handleBackAction()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.headline.weight(.semibold))
                 }
             }
+
+            ToolbarItem(placement: .navigationBarTrailing) {
+                if isLoggingUnlocked {
+                    Button("Done") {
+                        doneTapped()
+                    }
+                } else {
+                    Button("Begin Logging") {
+                        beginLogging()
+                    }
+                }
+            }
+        }
+        .alert("Discard This Log?", isPresented: $showDiscardChangesAlert) {
+            Button("Keep Editing", role: .cancel) {}
+            Button("Discard", role: .destructive) {
+                dismiss()
+            }
+        } message: {
+            Text("Your in-progress changes for this workout are not saved until you tap Done.")
+        }
+        .confirmationDialog(
+            "This workout already exists in today's session.",
+            isPresented: $showDuplicateChoiceDialog,
+            titleVisibility: .visible
+        ) {
+            Button("Replace Latest") {
+                handleDuplicateChoice(.replaceLatest)
+            }
+            Button("Keep Both") {
+                handleDuplicateChoice(.keepBoth)
+            }
+            Button("Cancel", role: .cancel) {
+                pendingSaveContext = nil
+            }
+        }
+        .alert("Update Future Defaults?", isPresented: $showPlanSyncAlert) {
+            Button("No", role: .cancel) {
+                finalizePendingSave(syncPlanDefaults: false)
+            }
+            Button("Yes") {
+                finalizePendingSave(syncPlanDefaults: true)
+            }
+        } message: {
+            Text("Apply this workout's warm-up and working set counts as the new plan defaults?")
         }
         .alert("Could Not Save", isPresented: Binding(
             get: { errorMessage != nil },
@@ -156,7 +232,6 @@ struct LogWorkoutView: View {
 
                 if !filteredPlateOptions.isEmpty {
                     PlateBarPreview(tokens: plateTokens(for: index))
-                        .frame(maxWidth: 250)
                         .frame(height: 56)
                 }
             }
@@ -184,6 +259,7 @@ struct LogWorkoutView: View {
         Menu {
             ForEach(WeightUnit.allCases) { unit in
                 Button {
+                    guard isLoggingUnlocked else { return }
                     currentUnit = unit
                 } label: {
                     if unit == currentUnit {
@@ -376,16 +452,19 @@ struct LogWorkoutView: View {
     }
 
     private func addSet() {
+        guard isLoggingUnlocked else { return }
         let plateIDs = filteredPlateOptions.map(\.id)
         setDrafts.append(SetDraft.makeDefault(plateOptionIDs: plateIDs))
     }
 
     private func copyLastSet() {
+        guard isLoggingUnlocked else { return }
         guard let last = setDrafts.last else { return }
         setDrafts.append(last.duplicate())
     }
 
     private func deleteSets(at offsets: IndexSet) {
+        guard isLoggingUnlocked else { return }
         setDrafts.remove(atOffsets: offsets)
     }
 
@@ -398,6 +477,7 @@ struct LogWorkoutView: View {
     }
 
     private func updatePlateCount(for setIndex: Int, plateID: UUID, delta: Int) {
+        guard isLoggingUnlocked else { return }
         let next = max(0, min(20, plateCount(for: setIndex, plateID: plateID) + delta))
         setPlateCount(next, for: setIndex, plateID: plateID)
     }
@@ -449,11 +529,13 @@ struct LogWorkoutView: View {
     }
 
     private func updateSetType(for setIndex: Int, type: SetType) {
+        guard isLoggingUnlocked else { return }
         guard setDrafts.indices.contains(setIndex) else { return }
         setDrafts[setIndex].setType = type
     }
 
     private func updateReps(for setIndex: Int, delta: Int) {
+        guard isLoggingUnlocked else { return }
         let next = max(0, repsValue(for: setIndex) + delta)
         setDrafts[setIndex].repsText = "\(next)"
     }
@@ -610,20 +692,14 @@ struct LogWorkoutView: View {
             )
             let sessions = try modelContext.fetch(descriptor)
 
-            let normalizedName = workout.name
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .lowercased()
-
             guard let previousEntry = sessions.lazy.compactMap({ session in
-                if let exact = session.entries.first(where: { $0.workoutTemplateId == workout.id }) {
+                if let exact = session.entries.last(where: { $0.workoutTemplateId == workout.id }) {
                     return exact
                 }
 
-                return session.entries.first(where: { entry in
-                    let entryName = entry.workoutNameSnapshot
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                        .lowercased()
-                    return entry.weightTypeSnapshot == workout.weightType && entryName == normalizedName
+                return session.entries.last(where: { entry in
+                    normalizeWorkoutName(entry.workoutNameSnapshot) == normalizeWorkoutName(workout.name)
+                        && entry.weightTypeSnapshot == workout.weightType
                 })
             }).first else {
                 return
@@ -649,57 +725,186 @@ struct LogWorkoutView: View {
                     weightUnit: set.loadUnit
                 )
             }
-
-            guard !sortedSets.isEmpty else { return }
-
-            let plateOptionIDs = filteredPlateOptions.map(\.id)
-            let defaultCounts = Dictionary(uniqueKeysWithValues: plateOptionIDs.map { ($0, 0) })
-
-            if workout.weightType.usesPlatePicker {
-                let restored: [SetDraft] = sortedSets.map { set in
-                    var counts = defaultCounts
-                    for plate in set.perSidePlates {
-                        guard counts[plate.plateOptionId] != nil else { continue }
-                        counts[plate.plateOptionId] = max(0, plate.countPerSide)
-                    }
-
-                    return SetDraft(
-                        repsText: "\(max(0, set.reps))",
-                        loadText: "",
-                        setType: set.setType ?? .working,
-                        plateCounts: counts
-                    )
-                }
-                setDrafts = restored
-                return
-            }
-
-            if let savedUnit = sortedSets.compactMap(\.loadUnit).first {
-                currentUnit = savedUnit
-            }
-
-            let restored: [SetDraft] = sortedSets.map { set in
-                let loadText = set.loadValue.map { max(0, $0).prettyWeight } ?? ""
-                return SetDraft(
-                    repsText: "\(max(0, set.reps))",
-                    loadText: loadText,
-                    setType: set.setType ?? .working,
-                    plateCounts: defaultCounts
-                )
-            }
-            setDrafts = restored
         } catch {
             print("Failed to load previous workout values: \(error)")
         }
     }
 
-    private func saveSession() {
+    private func beginLogging() {
+        sessionDate = .now
+        isLoggingUnlocked = true
+    }
+
+    private func handleBackAction() {
+        if isLoggingUnlocked {
+            showDiscardChangesAlert = true
+        } else {
+            dismiss()
+        }
+    }
+
+    private func doneTapped() {
+        guard isLoggingUnlocked else { return }
         guard !setDrafts.isEmpty else {
             errorMessage = "Add at least one set before saving."
             return
         }
 
-        let loggedSets: [LoggedSet] = setDrafts.enumerated().map { index, draft in
+        do {
+            pendingSaveContext = try buildPendingSaveContext()
+
+            guard let context = pendingSaveContext else { return }
+
+            if !context.duplicateEntryIndices.isEmpty {
+                showDuplicateChoiceDialog = true
+                return
+            }
+
+            if context.structureChangedFromPlan {
+                showPlanSyncAlert = true
+                return
+            }
+
+            finalizePendingSave(syncPlanDefaults: false)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func buildPendingSaveContext() throws -> PendingSaveContext {
+        let calendar = Calendar.current
+        let sessionDayStart = calendar.startOfDay(for: sessionDate)
+
+        let descriptor = FetchDescriptor<WorkoutSession>(
+            sortBy: [SortDescriptor(\WorkoutSession.date, order: .reverse)]
+        )
+        let sessions = try modelContext.fetch(descriptor)
+
+        let existingSession = sessions.first { session in
+            session.weekIndex == weekIndex
+                && session.weekday == dayPlan.weekday
+                && (
+                    calendar.isDate(session.sessionDayStart, inSameDayAs: sessionDayStart)
+                        || calendar.isDate(session.date, inSameDayAs: sessionDayStart)
+                )
+        }
+
+        let duplicateEntryIndices: [Int] = {
+            guard let session = existingSession else { return [] }
+            return session.entries.indices.filter { index in
+                matchesWorkout(entry: session.entries[index])
+            }
+        }()
+
+        let warmUpCount = setDrafts.filter { $0.setType == .warmUp }.count
+        let workingCount = setDrafts.filter { $0.setType == .working }.count
+
+        let structureChanged = warmUpCount != max(0, workout.plannedWarmUpSetCount)
+            || workingCount != max(1, workout.plannedWorkingSetCount)
+
+        return PendingSaveContext(
+            drafts: setDrafts,
+            unit: currentUnit,
+            date: sessionDate,
+            sessionDayStart: sessionDayStart,
+            existingSession: existingSession,
+            duplicateEntryIndices: duplicateEntryIndices,
+            duplicateResolution: .keepBoth,
+            structureChangedFromPlan: structureChanged
+        )
+    }
+
+    private func handleDuplicateChoice(_ resolution: DuplicateResolution) {
+        guard var context = pendingSaveContext else { return }
+        context.duplicateResolution = resolution
+        pendingSaveContext = context
+
+        if context.structureChangedFromPlan {
+            showPlanSyncAlert = true
+            return
+        }
+
+        finalizePendingSave(syncPlanDefaults: false)
+    }
+
+    private func finalizePendingSave(syncPlanDefaults: Bool) {
+        guard let context = pendingSaveContext else { return }
+
+        let session: WorkoutSession
+        if let existing = context.existingSession {
+            session = existing
+        } else {
+            session = WorkoutSession(
+                date: context.date,
+                sessionDayStart: context.sessionDayStart,
+                weekIndex: weekIndex,
+                weekday: dayPlan.weekday,
+                dayLabelSnapshot: dayPlan.label,
+                entries: []
+            )
+            modelContext.insert(session)
+        }
+
+        if context.duplicateResolution == .replaceLatest,
+           let replaceIndex = context.duplicateEntryIndices.max(),
+           session.entries.indices.contains(replaceIndex) {
+            let replaced = session.entries[replaceIndex]
+            session.entries.remove(at: replaceIndex)
+            modelContext.delete(replaced)
+        }
+
+        let entry = SessionEntry(
+            workoutTemplateId: workout.id,
+            workoutNameSnapshot: workout.name,
+            weightTypeSnapshot: workout.weightType,
+            sets: buildLoggedSets(from: context.drafts, unit: context.unit)
+        )
+
+        session.entries.append(entry)
+        session.date = context.date
+        session.sessionDayStart = context.sessionDayStart
+        session.dayLabelSnapshot = dayPlan.label
+
+        if !workout.weightType.usesPlatePicker {
+            workout.preferredUnit = context.unit
+        }
+
+        if syncPlanDefaults {
+            syncTemplatePlanDefaults(using: context.drafts)
+        }
+
+        do {
+            try modelContext.save()
+            pendingSaveContext = nil
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func syncTemplatePlanDefaults(using drafts: [SetDraft]) {
+        let warmUpCount = drafts.filter { $0.setType == .warmUp }.count
+        let workingCount = drafts.filter { $0.setType == .working }.count
+
+        workout.plannedWarmUpSetCount = max(0, warmUpCount)
+        workout.plannedWorkingSetCount = max(1, workingCount)
+    }
+
+    private func matchesWorkout(entry: SessionEntry) -> Bool {
+        if entry.workoutTemplateId == workout.id {
+            return true
+        }
+
+        return entry.weightTypeSnapshot == workout.weightType
+            && normalizeWorkoutName(entry.workoutNameSnapshot) == normalizeWorkoutName(workout.name)
+    }
+
+    private func normalizeWorkoutName(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private func buildLoggedSets(from drafts: [SetDraft], unit: WeightUnit) -> [LoggedSet] {
+        drafts.enumerated().map { index, draft in
             let reps = max(0, Int(draft.repsText) ?? 0)
 
             if workout.weightType.usesPlatePicker {
@@ -709,6 +914,11 @@ struct LogWorkoutView: View {
                     return PlateCount(plateOptionId: option.id, countPerSide: count)
                 }
 
+                let total = basePlateWeight + (2 * filteredPlateOptions.reduce(0.0) { partial, plate in
+                    let count = Double(max(0, draft.plateCounts[plate.id] ?? 0))
+                    return partial + (plate.value * count)
+                })
+
                 return LoggedSet(
                     setNumber: index + 1,
                     reps: reps,
@@ -716,7 +926,7 @@ struct LogWorkoutView: View {
                     perSidePlates: plateCounts,
                     barWeightValueSnapshot: basePlateWeight,
                     barWeightUnitSnapshot: appConfig.barWeightUnit,
-                    computedTotalValue: totalForSet(index),
+                    computedTotalValue: total,
                     computedTotalUnit: appConfig.barWeightUnit
                 )
             }
@@ -727,38 +937,26 @@ struct LogWorkoutView: View {
                 reps: reps,
                 setType: draft.setType,
                 loadValue: load,
-                loadUnit: currentUnit
+                loadUnit: unit
             )
         }
-
-        let entry = SessionEntry(
-            workoutTemplateId: workout.id,
-            workoutNameSnapshot: workout.name,
-            weightTypeSnapshot: workout.weightType,
-            sets: loggedSets
-        )
-
-        let session = WorkoutSession(
-            date: sessionDate,
-            weekIndex: weekIndex,
-            weekday: dayPlan.weekday,
-            dayLabelSnapshot: dayPlan.label,
-            entries: [entry]
-        )
-
-        if !workout.weightType.usesPlatePicker {
-            workout.preferredUnit = currentUnit
-        }
-
-        modelContext.insert(session)
-
-        do {
-            try modelContext.save()
-            dismiss()
-        } catch {
-            errorMessage = error.localizedDescription
-        }
     }
+}
+
+private enum DuplicateResolution {
+    case replaceLatest
+    case keepBoth
+}
+
+private struct PendingSaveContext {
+    var drafts: [SetDraft]
+    var unit: WeightUnit
+    var date: Date
+    var sessionDayStart: Date
+    var existingSession: WorkoutSession?
+    var duplicateEntryIndices: [Int]
+    var duplicateResolution: DuplicateResolution
+    var structureChangedFromPlan: Bool
 }
 
 private struct SetDraft: Identifiable {
@@ -768,13 +966,25 @@ private struct SetDraft: Identifiable {
     var setType: SetType
     var plateCounts: [UUID: Int]
 
-    static func makeDefault(plateOptionIDs: [UUID]) -> SetDraft {
+    static func makeDefault(plateOptionIDs: [UUID], setType: SetType = .working) -> SetDraft {
         SetDraft(
             repsText: "",
             loadText: "",
-            setType: .working,
+            setType: setType,
             plateCounts: Dictionary(uniqueKeysWithValues: plateOptionIDs.map { ($0, 0) })
         )
+    }
+
+    static func plannedDefaults(warmUpCount: Int, workingCount: Int, plateOptionIDs: [UUID]) -> [SetDraft] {
+        let warmUpSets = (0..<max(0, warmUpCount)).map { _ in
+            makeDefault(plateOptionIDs: plateOptionIDs, setType: .warmUp)
+        }
+        let workingSets = (0..<max(1, workingCount)).map { _ in
+            makeDefault(plateOptionIDs: plateOptionIDs, setType: .working)
+        }
+
+        let combined = warmUpSets + workingSets
+        return combined.isEmpty ? [makeDefault(plateOptionIDs: plateOptionIDs, setType: .working)] : combined
     }
 
     func duplicate() -> SetDraft {
@@ -797,6 +1007,9 @@ private struct PlateVisualToken: Identifiable {
 
 private struct PlateBarPreview: View {
     let tokens: [PlateVisualToken]
+    private let centerBlockWidth: CGFloat = 18
+    private let horizontalPadding: CGFloat = 32
+    private let targetLeftShaft: CGFloat = 20
 
     var body: some View {
         ZStack {
@@ -815,7 +1028,7 @@ private struct PlateBarPreview: View {
             }
             .padding(.horizontal, 16)
         }
-        .frame(maxWidth: .infinity)
+        .frame(width: previewWidth)
     }
 
     private func plateSide(tokens: [PlateVisualToken]) -> some View {
@@ -830,5 +1043,14 @@ private struct PlateBarPreview: View {
                     .frame(width: plateWidth, height: token.height)
             }
         }
+    }
+
+    private var previewWidth: CGFloat {
+        let tokenCount = CGFloat(max(tokens.count, 1))
+        let plateWidth = max(4, min(9, 96 / tokenCount))
+        let spacing = max(1, plateWidth * 0.2)
+        let sideWidth = (plateWidth * tokenCount) + (spacing * max(0, tokenCount - 1))
+        let rawWidth = sideWidth + centerBlockWidth + targetLeftShaft + horizontalPadding
+        return max(120, min(190, rawWidth))
     }
 }

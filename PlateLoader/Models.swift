@@ -12,7 +12,7 @@ enum WeightType: String, Codable, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .dumbbell: return "Dumbbell"
-        case .machine: return "Machine"
+        case .machine: return "Pin Loaded"
         case .barbell: return "Barbell"
         case .plateLoaded: return "Plate Loaded"
         }
@@ -165,6 +165,8 @@ final class WorkoutTemplate {
     var name: String
     var weightType: WeightType
     var preferredUnit: WeightUnit
+    var plannedWarmUpSetCount: Int = 1
+    var plannedWorkingSetCount: Int = 3
     var sortIndex: Int
     var isArchived: Bool
 
@@ -175,6 +177,8 @@ final class WorkoutTemplate {
         name: String,
         weightType: WeightType,
         preferredUnit: WeightUnit,
+        plannedWarmUpSetCount: Int = 1,
+        plannedWorkingSetCount: Int = 3,
         sortIndex: Int,
         isArchived: Bool = false
     ) {
@@ -182,6 +186,8 @@ final class WorkoutTemplate {
         self.name = name
         self.weightType = weightType
         self.preferredUnit = preferredUnit
+        self.plannedWarmUpSetCount = max(0, plannedWarmUpSetCount)
+        self.plannedWorkingSetCount = max(1, plannedWorkingSetCount)
         self.sortIndex = max(0, sortIndex)
         self.isArchived = isArchived
     }
@@ -191,6 +197,7 @@ final class WorkoutTemplate {
 final class WorkoutSession {
     @Attribute(.unique) var id: UUID
     var date: Date
+    var sessionDayStart: Date = Date.now
     var weekIndex: Int
     var weekday: Weekday
     var dayLabelSnapshot: String
@@ -201,6 +208,7 @@ final class WorkoutSession {
     init(
         id: UUID = UUID(),
         date: Date,
+        sessionDayStart: Date? = nil,
         weekIndex: Int,
         weekday: Weekday,
         dayLabelSnapshot: String,
@@ -208,6 +216,7 @@ final class WorkoutSession {
     ) {
         self.id = id
         self.date = date
+        self.sessionDayStart = sessionDayStart ?? Calendar.current.startOfDay(for: date)
         self.weekIndex = max(1, weekIndex)
         self.weekday = weekday
         self.dayLabelSnapshot = dayLabelSnapshot
@@ -245,7 +254,7 @@ final class LoggedSet {
     var reps: Int
     var setType: SetType?
 
-    // Dumbbell/Machine
+    // Dumbbell/Pin loaded
     var loadValue: Double?
     var loadUnit: WeightUnit?
 

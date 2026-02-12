@@ -18,13 +18,14 @@ struct SettingsView: View {
 
     @State private var errorMessage: String?
     @State private var showFactoryResetConfirm = false
+    @State private var didHydrateWeekDrafts = false
 
     init(appConfig: AppConfig, splitPlan: SplitPlan) {
         self.appConfig = appConfig
         self.splitPlan = splitPlan
 
         _splitLengthWeeksDraft = State(initialValue: appConfig.splitLengthWeeks)
-        _weekDrafts = State(initialValue: WeekEditDraft.from(splitPlan: splitPlan, splitLength: appConfig.splitLengthWeeks))
+        _weekDrafts = State(initialValue: WeekEditDraft.defaults(splitLength: appConfig.splitLengthWeeks))
 
         _barWeightUnitDraft = State(initialValue: appConfig.barWeightUnit)
         _barWeightValueText = State(initialValue: appConfig.barWeightValue.prettyWeight)
@@ -156,6 +157,9 @@ struct SettingsView: View {
                 barWeightValueText = newValue == .lb ? "45" : "20"
             }
         }
+        .onAppear {
+            hydrateWeekDraftsIfNeeded()
+        }
     }
 
     private func syncWeekDrafts(to requestedLength: Int) {
@@ -197,6 +201,19 @@ struct SettingsView: View {
         plateDrafts.append(draft)
         plateDrafts.sort { $0.value > $1.value }
         customPlateText = ""
+    }
+
+    private func hydrateWeekDraftsIfNeeded() {
+        guard !didHydrateWeekDrafts else { return }
+        didHydrateWeekDrafts = true
+
+        do {
+            let fetchedPlans = try modelContext.fetch(FetchDescriptor<SplitPlan>())
+            guard let currentPlan = fetchedPlans.first else { return }
+            weekDrafts = WeekEditDraft.from(splitPlan: currentPlan, splitLength: splitLengthWeeksDraft)
+        } catch {
+            // Keep defaults if hydration fails.
+        }
     }
 
     private func saveChanges() {
@@ -292,14 +309,14 @@ struct SettingsView: View {
             let plans = try modelContext.fetch(FetchDescriptor<SplitPlan>())
             let configs = try modelContext.fetch(FetchDescriptor<AppConfig>())
 
-            for session in sessions {
-                modelContext.delete(session)
+            for config in configs {
+                modelContext.delete(config)
             }
             for plan in plans {
                 modelContext.delete(plan)
             }
-            for config in configs {
-                modelContext.delete(config)
+            for session in sessions {
+                modelContext.delete(session)
             }
 
             try modelContext.save()
@@ -313,6 +330,10 @@ private struct WeekEditDraft: Identifiable {
     let id = UUID()
     var weekIndex: Int
     var days: [DayEditDraft]
+
+    static func defaults(splitLength: Int) -> [WeekEditDraft] {
+        (1...max(1, splitLength)).map { makeDefault(weekIndex: $0) }
+    }
 
     static func makeDefault(weekIndex: Int) -> WeekEditDraft {
         WeekEditDraft(

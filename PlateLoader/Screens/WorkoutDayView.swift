@@ -3,16 +3,23 @@ import SwiftUI
 
 struct WorkoutDayView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("profileFirstName") private var profileFirstName: String = ""
 
     var appConfig: AppConfig
     var splitPlan: SplitPlan
 
+    @Query(sort: \WorkoutSession.date, order: .reverse)
+    private var sessions: [WorkoutSession]
+
     @State private var selectedWeekIndex: Int = 1
     @State private var selectedWeekday: Weekday = .sunday
     @State private var showAddWorkout = false
+    @State private var showEditWorkoutPlan = false
+    @State private var hasAutoSelectedForCurrentAppearance = false
 
     @State private var workoutToRename: WorkoutTemplate?
+    @State private var workoutToEditPlan: WorkoutTemplate?
     @State private var renameValue: String = ""
 
     var body: some View {
@@ -59,6 +66,22 @@ struct WorkoutDayView: View {
                 .presentationCornerRadius(28)
             }
         }
+        .sheet(isPresented: $showEditWorkoutPlan, onDismiss: {
+            workoutToEditPlan = nil
+        }) {
+            if let dayPlan = currentDayPlan, let workout = workoutToEditPlan {
+                NavigationStack {
+                    AddWorkoutView(
+                        dayPlan: dayPlan,
+                        defaultUnit: appConfig.barWeightUnit,
+                        workoutToEdit: workout
+                    )
+                }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationCornerRadius(28)
+            }
+        }
         .alert("Rename Workout", isPresented: Binding(
             get: { workoutToRename != nil },
             set: { isPresented in
@@ -78,8 +101,14 @@ struct WorkoutDayView: View {
             }
         }
         .onAppear {
-            selectedWeekIndex = min(max(1, selectedWeekIndex), appConfig.splitLengthWeeks)
-            ensureValidDaySelection()
+            autoSelectFromCalendar(force: false)
+        }
+        .onDisappear {
+            hasAutoSelectedForCurrentAppearance = false
+        }
+        .onChange(of: scenePhase) { _, newValue in
+            guard newValue == .active else { return }
+            autoSelectFromCalendar(force: true)
         }
         .onChange(of: selectedWeekIndex) { _, _ in
             ensureValidDaySelection()
@@ -183,7 +212,7 @@ struct WorkoutDayView: View {
                     ContentUnavailableView(
                         "No Workouts",
                         systemImage: "list.bullet.rectangle",
-                        description: Text("Tap + to add your first workout for \(dayPlan.label).")
+                        description: Text("Tap + to plan your first workout for \(dayPlan.label).")
                     )
                 } else {
                     ForEach(workouts, id: \.id) { workout in
@@ -195,16 +224,32 @@ struct WorkoutDayView: View {
                                 appConfig: appConfig
                             )
                         } label: {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(workout.name)
-                                    .font(.body)
-                                Text(workout.weightType.title)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                            HStack(spacing: 8) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(workout.name)
+                                        .font(.body)
+                                    Text(workout.weightType.title)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Spacer(minLength: 6)
+
+                                if isWorkoutCompletedToday(workout) {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.green)
+                                        .accessibilityLabel("Logged today")
+                                }
                             }
                             .padding(.vertical, 4)
                         }
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button("Edit Plan") {
+                                workoutToEditPlan = workout
+                                showEditWorkoutPlan = true
+                            }
+
                             Button("Rename") {
                                 workoutToRename = workout
                                 renameValue = workout.name
@@ -295,6 +340,136 @@ struct WorkoutDayView: View {
         }
     }
 
+    private func autoSelectFromCalendar(force: Bool) {
+        if !force && hasAutoSelectedForCurrentAppearance {
+            return
+        }
+        hasAutoSelectedForCurrentAppearance = true
+
+        selectedWeekIndex = min(max(1, selectedWeekIndex), max(1, appConfig.splitLengthWeeks))
+
+        guard let selection = automaticSelectionForCurrentDate() else {
+            ensureValidDaySelection()
+            return
+        }
+
+        withAnimation(.easeInOut(duration: 0.2)) {
+            selectedWeekIndex = selection.weekIndex
+            selectedWeekday = selection.weekday
+        }
+    }
+
+    private func automaticSelectionForCurrentDate() -> DaySelection? {
+        let today = startOfDay(Date.now)
+        let currentWeekIndex = splitWeekIndex(for: today)
+        let todayWeekday = weekday(for: today)
+
+        if weekHasDay(weekIndex: currentWeekIndex, weekday: todayWeekday) {
+            return DaySelection(weekIndex: currentWeekIndex, weekday: todayWeekday)
+        }
+
+        let maxSearchDays = max(1, appConfig.splitLengthWeeks * 7)
+        for dayOffset in 1...maxSearchDays {
+            guard let candidateDate = Calendar.current.date(byAdding: .day, value: dayOffset, to: today) else {
+                continue
+            }
+
+            let candidateWeek = splitWeekIndex(for: candidateDate)
+            let candidateWeekday = weekday(for: candidateDate)
+
+            if weekHasDay(weekIndex: candidateWeek, weekday: candidateWeekday) {
+                return DaySelection(weekIndex: candidateWeek, weekday: candidateWeekday)
+            }
+        }
+
+        if let firstInComputedWeek = splitPlan.week(for: currentWeekIndex)?.sortedDayPlans.first?.weekday {
+            return DaySelection(weekIndex: currentWeekIndex, weekday: firstInComputedWeek)
+        }
+
+        if let firstAnywhere = firstAvailableDaySelection {
+            return firstAnywhere
+        }
+
+        return nil
+    }
+
+    private var firstAvailableDaySelection: DaySelection? {
+        for week in splitPlan.sortedWeeks {
+            if let day = week.sortedDayPlans.first {
+                return DaySelection(weekIndex: week.weekIndex, weekday: day.weekday)
+            }
+        }
+        return nil
+    }
+
+    private func weekHasDay(weekIndex: Int, weekday: Weekday) -> Bool {
+        splitPlan.week(for: weekIndex)?
+            .sortedDayPlans
+            .contains(where: { $0.weekday == weekday }) ?? false
+    }
+
+    private func splitWeekIndex(for date: Date) -> Int {
+        let calendar = Calendar.current
+        let anchor = startOfDay(appConfig.createdAt)
+        let target = startOfDay(date)
+        let rawDayDiff = calendar.dateComponents([.day], from: anchor, to: target).day ?? 0
+        let daysSinceAnchor = max(0, rawDayDiff)
+        let splitLength = max(1, appConfig.splitLengthWeeks)
+        return ((daysSinceAnchor / 7) % splitLength) + 1
+    }
+
+    private func weekday(for date: Date) -> Weekday {
+        let raw = Calendar.current.component(.weekday, from: date)
+        return Weekday(rawValue: raw) ?? .sunday
+    }
+
+    private func startOfDay(_ date: Date) -> Date {
+        Calendar.current.startOfDay(for: date)
+    }
+
+    private func isWorkoutCompletedToday(_ workout: WorkoutTemplate) -> Bool {
+        guard let session = todayWorkoutSession else { return false }
+        let todaySelection = todayDaySelection
+        let normalizedWorkoutName = normalizeWorkoutName(workout.name)
+
+        return session.entries.contains { entry in
+            if entry.workoutTemplateId == workout.id {
+                return true
+            }
+
+            let isTodayTemplate = workout.dayPlan?.weekday == todaySelection.weekday
+                && workout.dayPlan?.planWeek?.weekIndex == todaySelection.weekIndex
+            guard isTodayTemplate else { return false }
+
+            return entry.weightTypeSnapshot == workout.weightType
+                && normalizeWorkoutName(entry.workoutNameSnapshot) == normalizedWorkoutName
+        }
+    }
+
+    private var todayDaySelection: DaySelection {
+        let today = startOfDay(Date.now)
+        return DaySelection(weekIndex: splitWeekIndex(for: today), weekday: weekday(for: today))
+    }
+
+    private var todayWorkoutSession: WorkoutSession? {
+        let today = startOfDay(Date.now)
+        let todaySelection = todayDaySelection
+        let calendar = Calendar.current
+
+        return sessions.first { session in
+            guard session.weekIndex == todaySelection.weekIndex && session.weekday == todaySelection.weekday else {
+                return false
+            }
+
+            return calendar.isDate(session.sessionDayStart, inSameDayAs: today)
+                || calendar.isDate(session.date, inSameDayAs: today)
+        }
+    }
+
+    private func normalizeWorkoutName(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
     private func moveWorkouts(in dayPlan: DayPlan, from source: IndexSet, to destination: Int) {
         var ordered = dayPlan.activeSortedWorkouts
         ordered.move(fromOffsets: source, toOffset: destination)
@@ -345,4 +520,9 @@ struct WorkoutDayView: View {
             print("Failed to save day view changes: \(error)")
         }
     }
+}
+
+private struct DaySelection {
+    var weekIndex: Int
+    var weekday: Weekday
 }
