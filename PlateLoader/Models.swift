@@ -34,6 +34,24 @@ enum WeightUnit: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+enum SetType: String, Codable, CaseIterable, Identifiable {
+    case warmUp
+    case working
+    case drop
+    case failure
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .warmUp: return "Warm-Up"
+        case .working: return "Working"
+        case .drop: return "Drop"
+        case .failure: return "Failure"
+        }
+    }
+}
+
 enum Weekday: Int, Codable, CaseIterable, Identifiable {
     case sunday = 1
     case monday
@@ -225,6 +243,7 @@ final class SessionEntry {
 final class LoggedSet {
     var setNumber: Int
     var reps: Int
+    var setType: SetType?
 
     // Dumbbell/Machine
     var loadValue: Double?
@@ -243,6 +262,7 @@ final class LoggedSet {
     init(
         setNumber: Int,
         reps: Int,
+        setType: SetType? = nil,
         loadValue: Double? = nil,
         loadUnit: WeightUnit? = nil,
         perSidePlates: [PlateCount] = [],
@@ -253,6 +273,7 @@ final class LoggedSet {
     ) {
         self.setNumber = max(1, setNumber)
         self.reps = max(0, reps)
+        self.setType = setType
         self.loadValue = loadValue.map { max(0, $0) }
         self.loadUnit = loadUnit
         self.perSidePlates = perSidePlates

@@ -24,6 +24,12 @@ struct SessionDetailView: View {
                             Text("Set \(set.setNumber)")
                                 .font(.headline)
 
+                            if let setType = set.setType {
+                                Text("Type: \(setType.title)")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+
                             if entry.weightTypeSnapshot.usesPlatePicker {
                                 if let total = set.computedTotalValue, let unit = set.computedTotalUnit {
                                     Text("Total: \(total.prettyWeight) \(unit.rawValue)")
