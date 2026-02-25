@@ -8,7 +8,7 @@ struct AddWorkoutView: View {
     @Query(sort: \WorkoutTemplate.name)
     private var allTemplates: [WorkoutTemplate]
 
-    var dayPlan: DayPlan
+    var workoutDay: WorkoutDay
     var defaultUnit: WeightUnit = .lb
     var workoutToEdit: WorkoutTemplate?
 
@@ -20,8 +20,8 @@ struct AddWorkoutView: View {
     @State private var showSavedWorkouts = false
     @State private var errorMessage: String?
 
-    init(dayPlan: DayPlan, defaultUnit: WeightUnit = .lb, workoutToEdit: WorkoutTemplate? = nil) {
-        self.dayPlan = dayPlan
+    init(workoutDay: WorkoutDay, defaultUnit: WeightUnit = .lb, workoutToEdit: WorkoutTemplate? = nil) {
+        self.workoutDay = workoutDay
         self.defaultUnit = defaultUnit
         self.workoutToEdit = workoutToEdit
 
@@ -121,7 +121,7 @@ struct AddWorkoutView: View {
         }
 
         let editingID = workoutToEdit?.id
-        if dayPlan.activeSortedWorkouts.contains(where: {
+        if workoutDay.activeSortedWorkouts.contains(where: {
             $0.id != editingID &&
             $0.name.trimmingCharacters(in: .whitespacesAndNewlines).caseInsensitiveCompare(cleanedName) == .orderedSame
                 && $0.weightType == weightType
@@ -137,7 +137,7 @@ struct AddWorkoutView: View {
             existing.plannedWorkingSetCount = max(1, plannedWorkingSetCount)
             existing.preferredUnit = weightType.usesPlatePicker ? defaultUnit : preferredUnit
         } else {
-            let nextSortIndex = dayPlan.activeSortedWorkouts.count
+            let nextSortIndex = workoutDay.activeSortedWorkouts.count
             let unitToStore = weightType.usesPlatePicker ? defaultUnit : preferredUnit
             let newWorkout = WorkoutTemplate(
                 name: cleanedName,
@@ -148,7 +148,7 @@ struct AddWorkoutView: View {
                 sortIndex: nextSortIndex,
                 isArchived: false
             )
-            dayPlan.workouts.append(newWorkout)
+            workoutDay.workouts.append(newWorkout)
         }
 
         do {

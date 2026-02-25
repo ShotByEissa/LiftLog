@@ -5,9 +5,8 @@ struct SetupFlowView: View {
     @Environment(\.modelContext) private var modelContext
 
     @State private var step: Int = 0
-    @State private var splitLengthWeeks: Int = 1
-    @State private var selectedWeekEditor: Int = 1
-    @State private var weekDrafts: [SetupWeekDraft] = [SetupWeekDraft.makeDefault(weekIndex: 1)]
+    @State private var dayCardDrafts: [DayCardDraft] = []
+    @State private var newDayName: String = ""
 
     @State private var barWeightUnit: WeightUnit = .lb
     @State private var barWeightValueText: String = "45"
@@ -25,9 +24,7 @@ struct SetupFlowView: View {
                 Group {
                     switch step {
                     case 0:
-                        splitLengthStep
-                    case 1:
-                        splitPlanStep
+                        workoutDaysStep
                     default:
                         barbellDefaultsStep
                     }
@@ -46,9 +43,6 @@ struct SetupFlowView: View {
             } message: {
                 Text(errorMessage ?? "Unknown setup error.")
             }
-            .onChange(of: splitLengthWeeks) { _, newValue in
-                syncWeeks(to: newValue)
-            }
             .onChange(of: barWeightUnit) { oldValue, newValue in
                 guard oldValue != newValue else { return }
                 barWeightValueText = newValue == .lb ? "45" : "20"
@@ -59,79 +53,47 @@ struct SetupFlowView: View {
 
     private var setupHeader: some View {
         VStack(spacing: 8) {
-            Text("Step \(step + 1) of 3")
+            Text("Step \(step + 1) of 2")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            ProgressView(value: Double(step + 1), total: 3)
+            ProgressView(value: Double(step + 1), total: 2)
                 .padding(.horizontal)
         }
         .padding(.vertical, 12)
     }
 
-    private var splitLengthStep: some View {
+    private var workoutDaysStep: some View {
         Form {
-            Section("Split Length") {
-                Picker("Weeks", selection: $splitLengthWeeks) {
-                    ForEach(1...4, id: \.self) { value in
-                        Text("\(value)").tag(value)
+            Section("Create Your Workout Days") {
+                HStack {
+                    TextField("Day name (e.g. Push, Legs)", text: $newDayName)
+                        .textInputAutocapitalization(.words)
+                    Button("Add") {
+                        addDayCard()
                     }
+                    .disabled(newDayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                .pickerStyle(.segmented)
 
-                Stepper("\(splitLengthWeeks) week split", value: $splitLengthWeeks, in: 1...4)
+                if dayCardDrafts.isEmpty {
+                    Text("Add at least one workout day to get started.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(dayCardDrafts) { draft in
+                        Text(draft.label)
+                    }
+                    .onDelete(perform: deleteDayCards)
+                    .onMove(perform: moveDayCards)
+                }
             }
 
             Section {
-                Text("Choose how many weeks are in your repeating plan.")
+                Text("Name your workout days however you like — Push/Pull/Legs, Upper/Lower, or by muscle group.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
         }
-    }
-
-    private var splitPlanStep: some View {
-        Form {
-            Section("Week") {
-                Picker("Editing", selection: $selectedWeekEditor) {
-                    ForEach(1...splitLengthWeeks, id: \.self) { weekIndex in
-                        Text("Week \(weekIndex)").tag(weekIndex)
-                    }
-                }
-                .pickerStyle(.segmented)
-            }
-
-            if let weekIndex = weekDrafts.firstIndex(where: { $0.weekIndex == selectedWeekEditor }) {
-                Section("Workout Days") {
-                    ForEach(weekDrafts[weekIndex].days.indices, id: \.self) { dayIndex in
-                        VStack(alignment: .leading, spacing: 8) {
-                            Toggle(
-                                weekDrafts[weekIndex].days[dayIndex].weekday.fullName,
-                                isOn: Binding(
-                                    get: { weekDrafts[weekIndex].days[dayIndex].isSelected },
-                                    set: { isSelected in
-                                        weekDrafts[weekIndex].days[dayIndex].isSelected = isSelected
-                                        if !isSelected {
-                                            weekDrafts[weekIndex].days[dayIndex].label = ""
-                                        }
-                                    }
-                                )
-                            )
-
-                            if weekDrafts[weekIndex].days[dayIndex].isSelected {
-                                TextField(
-                                    "Label (e.g. Chest)",
-                                    text: Binding(
-                                        get: { weekDrafts[weekIndex].days[dayIndex].label },
-                                        set: { weekDrafts[weekIndex].days[dayIndex].label = $0 }
-                                    )
-                                )
-                                .textInputAutocapitalization(.words)
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        .environment(\.editMode, .constant(.active))
     }
 
     private var barbellDefaultsStep: some View {
@@ -191,7 +153,7 @@ struct SetupFlowView: View {
 
             Spacer()
 
-            Button(step == 2 ? "Finish" : "Next") {
+            Button(step == 1 ? "Finish" : "Next") {
                 advance()
             }
             .buttonStyle(.borderedProminent)
@@ -199,22 +161,27 @@ struct SetupFlowView: View {
         .padding()
     }
 
-    private func syncWeeks(to requestedLength: Int) {
-        let targetLength = AppConfig.clampSplitLength(requestedLength)
-        splitLengthWeeks = targetLength
+    private func addDayCard() {
+        let trimmed = newDayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
 
-        if weekDrafts.count > targetLength {
-            weekDrafts = Array(weekDrafts.prefix(targetLength))
-        } else if weekDrafts.count < targetLength {
-            let start = weekDrafts.count + 1
-            for index in start...targetLength {
-                weekDrafts.append(SetupWeekDraft.makeDefault(weekIndex: index))
-            }
+        if dayCardDrafts.contains(where: {
+            $0.label.caseInsensitiveCompare(trimmed) == .orderedSame
+        }) {
+            errorMessage = "A workout day with that name already exists."
+            return
         }
 
-        if selectedWeekEditor > targetLength {
-            selectedWeekEditor = targetLength
-        }
+        dayCardDrafts.append(DayCardDraft(label: trimmed))
+        newDayName = ""
+    }
+
+    private func deleteDayCards(at offsets: IndexSet) {
+        dayCardDrafts.remove(atOffsets: offsets)
+    }
+
+    private func moveDayCards(from source: IndexSet, to destination: Int) {
+        dayCardDrafts.move(fromOffsets: source, toOffset: destination)
     }
 
     private func deletePlates(at offsets: IndexSet) {
@@ -244,19 +211,11 @@ struct SetupFlowView: View {
 
     private func advance() {
         if step == 0 {
-            step = 1
-            return
-        }
-
-        if step == 1 {
-            for weekDraft in weekDrafts.prefix(splitLengthWeeks) {
-                let selectedDays = weekDraft.days.filter(\.isSelected)
-                if selectedDays.isEmpty {
-                    errorMessage = "Each week must have at least one selected workout day."
-                    return
-                }
+            guard !dayCardDrafts.isEmpty else {
+                errorMessage = "Add at least one workout day."
+                return
             }
-            step = 2
+            step = 1
             return
         }
 
@@ -278,7 +237,6 @@ struct SetupFlowView: View {
             try clearExistingDataIfNeeded()
 
             let config = AppConfig(
-                splitLengthWeeks: splitLengthWeeks,
                 barWeightValue: barWeight,
                 barWeightUnit: barWeightUnit,
                 plateCatalog: plateDrafts.map {
@@ -286,22 +244,12 @@ struct SetupFlowView: View {
                 }
             )
 
-            let splitPlan = SplitPlan()
-            for weekIndex in 1...splitLengthWeeks {
-                guard let weekDraft = weekDrafts.first(where: { $0.weekIndex == weekIndex }) else { continue }
-
-                let planWeek = PlanWeek(weekIndex: weekIndex)
-                for day in weekDraft.days where day.isSelected {
-                    let cleanedLabel = day.label.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let finalLabel = cleanedLabel.isEmpty ? day.weekday.fullName : cleanedLabel
-                    let dayPlan = DayPlan(weekday: day.weekday, label: finalLabel)
-                    planWeek.dayPlans.append(dayPlan)
-                }
-                splitPlan.weeks.append(planWeek)
+            for (index, draft) in dayCardDrafts.enumerated() {
+                let workoutDay = WorkoutDay(label: draft.label, sortIndex: index)
+                config.workoutDays.append(workoutDay)
             }
 
             modelContext.insert(config)
-            modelContext.insert(splitPlan)
             try modelContext.save()
         } catch {
             errorMessage = "Could not finish setup: \(error.localizedDescription)"
@@ -310,15 +258,11 @@ struct SetupFlowView: View {
 
     private func clearExistingDataIfNeeded() throws {
         let existingConfigs = try modelContext.fetch(FetchDescriptor<AppConfig>())
-        let existingSplitPlans = try modelContext.fetch(FetchDescriptor<SplitPlan>())
         let existingSessions = try modelContext.fetch(FetchDescriptor<WorkoutSession>())
 
-        if !existingConfigs.isEmpty || !existingSplitPlans.isEmpty || !existingSessions.isEmpty {
+        if !existingConfigs.isEmpty || !existingSessions.isEmpty {
             for config in existingConfigs {
                 modelContext.delete(config)
-            }
-            for plan in existingSplitPlans {
-                modelContext.delete(plan)
             }
             for session in existingSessions {
                 modelContext.delete(session)
@@ -327,25 +271,8 @@ struct SetupFlowView: View {
     }
 }
 
-private struct SetupWeekDraft: Identifiable {
+private struct DayCardDraft: Identifiable {
     let id = UUID()
-    var weekIndex: Int
-    var days: [SetupDayDraft]
-
-    static func makeDefault(weekIndex: Int) -> SetupWeekDraft {
-        SetupWeekDraft(
-            weekIndex: weekIndex,
-            days: Weekday.allCases.map { day in
-                SetupDayDraft(weekday: day, isSelected: false, label: "")
-            }
-        )
-    }
-}
-
-private struct SetupDayDraft: Identifiable {
-    let id = UUID()
-    var weekday: Weekday
-    var isSelected: Bool
     var label: String
 }
 

@@ -90,7 +90,6 @@ enum Weekday: Int, Codable, CaseIterable, Identifiable {
 
 @Model
 final class AppConfig {
-    var splitLengthWeeks: Int
     var createdAt: Date
     var barWeightValue: Double
     var barWeightUnit: WeightUnit
@@ -98,64 +97,64 @@ final class AppConfig {
     @Relationship(deleteRule: .cascade, inverse: \PlateOption.appConfig)
     var plateCatalog: [PlateOption]
 
+    @Relationship(deleteRule: .cascade, inverse: \WorkoutDay.appConfig)
+    var workoutDays: [WorkoutDay]
+
     init(
-        splitLengthWeeks: Int,
         createdAt: Date = .now,
         barWeightValue: Double,
         barWeightUnit: WeightUnit,
-        plateCatalog: [PlateOption] = []
+        plateCatalog: [PlateOption] = [],
+        workoutDays: [WorkoutDay] = []
     ) {
-        self.splitLengthWeeks = AppConfig.clampSplitLength(splitLengthWeeks)
         self.createdAt = createdAt
         self.barWeightValue = max(0, barWeightValue)
         self.barWeightUnit = barWeightUnit
         self.plateCatalog = plateCatalog
+        self.workoutDays = workoutDays
     }
+}
 
-    static func clampSplitLength(_ value: Int) -> Int {
-        min(max(value, 1), 4)
+extension AppConfig {
+    var sortedWorkoutDays: [WorkoutDay] {
+        workoutDays.sorted { $0.sortIndex < $1.sortIndex }
     }
 }
 
 @Model
-final class SplitPlan {
-    @Relationship(deleteRule: .cascade, inverse: \PlanWeek.splitPlan)
-    var weeks: [PlanWeek]
-
-    init(weeks: [PlanWeek] = []) {
-        self.weeks = weeks
-    }
-}
-
-@Model
-final class PlanWeek {
-    var weekIndex: Int
-
-    @Relationship(deleteRule: .cascade, inverse: \DayPlan.planWeek)
-    var dayPlans: [DayPlan]
-
-    var splitPlan: SplitPlan?
-
-    init(weekIndex: Int, dayPlans: [DayPlan] = []) {
-        self.weekIndex = weekIndex
-        self.dayPlans = dayPlans
-    }
-}
-
-@Model
-final class DayPlan {
-    var weekday: Weekday
+final class WorkoutDay {
+    @Attribute(.unique) var id: UUID
     var label: String
+    var sortIndex: Int
 
-    @Relationship(deleteRule: .cascade, inverse: \WorkoutTemplate.dayPlan)
+    @Relationship(deleteRule: .cascade, inverse: \WorkoutTemplate.workoutDay)
     var workouts: [WorkoutTemplate]
 
-    var planWeek: PlanWeek?
+    var appConfig: AppConfig?
 
-    init(weekday: Weekday, label: String, workouts: [WorkoutTemplate] = []) {
-        self.weekday = weekday
+    init(
+        id: UUID = UUID(),
+        label: String,
+        sortIndex: Int,
+        workouts: [WorkoutTemplate] = []
+    ) {
+        self.id = id
         self.label = label
+        self.sortIndex = max(0, sortIndex)
         self.workouts = workouts
+    }
+}
+
+extension WorkoutDay {
+    var activeSortedWorkouts: [WorkoutTemplate] {
+        workouts
+            .filter { !$0.isArchived }
+            .sorted { lhs, rhs in
+                if lhs.sortIndex == rhs.sortIndex {
+                    return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+                }
+                return lhs.sortIndex < rhs.sortIndex
+            }
     }
 }
 
@@ -170,7 +169,7 @@ final class WorkoutTemplate {
     var sortIndex: Int
     var isArchived: Bool
 
-    var dayPlan: DayPlan?
+    var workoutDay: WorkoutDay?
 
     init(
         id: UUID = UUID(),
@@ -198,8 +197,6 @@ final class WorkoutSession {
     @Attribute(.unique) var id: UUID
     var date: Date
     var sessionDayStart: Date = Date.now
-    var weekIndex: Int
-    var weekday: Weekday
     var dayLabelSnapshot: String
 
     @Relationship(deleteRule: .cascade, inverse: \SessionEntry.session)
@@ -209,16 +206,12 @@ final class WorkoutSession {
         id: UUID = UUID(),
         date: Date,
         sessionDayStart: Date? = nil,
-        weekIndex: Int,
-        weekday: Weekday,
         dayLabelSnapshot: String,
         entries: [SessionEntry] = []
     ) {
         self.id = id
         self.date = date
         self.sessionDayStart = sessionDayStart ?? Calendar.current.startOfDay(for: date)
-        self.weekIndex = max(1, weekIndex)
-        self.weekday = weekday
         self.dayLabelSnapshot = dayLabelSnapshot
         self.entries = entries
     }
@@ -320,39 +313,6 @@ final class PlateCount {
     init(plateOptionId: UUID, countPerSide: Int) {
         self.plateOptionId = plateOptionId
         self.countPerSide = max(0, countPerSide)
-    }
-}
-
-extension SplitPlan {
-    var sortedWeeks: [PlanWeek] {
-        weeks.sorted { $0.weekIndex < $1.weekIndex }
-    }
-
-    func week(for index: Int) -> PlanWeek? {
-        weeks.first { $0.weekIndex == index }
-    }
-}
-
-extension PlanWeek {
-    var sortedDayPlans: [DayPlan] {
-        dayPlans.sorted { $0.weekday.rawValue < $1.weekday.rawValue }
-    }
-
-    func dayPlan(for weekday: Weekday) -> DayPlan? {
-        dayPlans.first { $0.weekday == weekday }
-    }
-}
-
-extension DayPlan {
-    var activeSortedWorkouts: [WorkoutTemplate] {
-        workouts
-            .filter { !$0.isArchived }
-            .sorted { lhs, rhs in
-                if lhs.sortIndex == rhs.sortIndex {
-                    return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
-                }
-                return lhs.sortIndex < rhs.sortIndex
-            }
     }
 }
 

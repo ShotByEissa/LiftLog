@@ -2,17 +2,16 @@ import SwiftData
 import SwiftUI
 
 struct HistoryView: View {
-    var splitPlan: SplitPlan
-
     @Query(sort: \WorkoutSession.date, order: .reverse)
     private var sessions: [WorkoutSession]
 
-    @State private var selectedWeekIndex: Int = 1
-    @State private var selectedWeekday: Weekday = .sunday
+    @State private var selectedLabel: String? = nil
 
     var body: some View {
         VStack(spacing: 12) {
-            filters
+            if !uniqueLabels.isEmpty {
+                labelFilter
+            }
 
             if filteredSessions.isEmpty {
                 ContentUnavailableView(
@@ -40,55 +39,58 @@ struct HistoryView: View {
             }
         }
         .navigationTitle("History")
-        .onAppear {
-            ensureValidDaySelection()
-        }
-        .onChange(of: selectedWeekIndex) { _, _ in
-            ensureValidDaySelection()
-        }
     }
 
-    private var filters: some View {
-        VStack(spacing: 10) {
-            Picker("Week", selection: $selectedWeekIndex) {
-                ForEach(splitPlan.sortedWeeks.map(\.weekIndex), id: \.self) { week in
-                    Text("Week \(week)").tag(week)
-                }
+    private var uniqueLabels: [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for session in sessions {
+            let label = session.dayLabelSnapshot
+            if !seen.contains(label) {
+                seen.insert(label)
+                result.append(label)
             }
-            .pickerStyle(.segmented)
+        }
+        return result.sorted()
+    }
 
-            if !availableDayPlans.isEmpty {
-                Picker("Day", selection: $selectedWeekday) {
-                    ForEach(availableDayPlans, id: \.weekday.rawValue) { dayPlan in
-                        Text(dayPlan.weekday.shortName).tag(dayPlan.weekday)
+    private var labelFilter: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                filterChip(label: "All", isSelected: selectedLabel == nil) {
+                    selectedLabel = nil
+                }
+
+                ForEach(uniqueLabels, id: \.self) { label in
+                    filterChip(label: label, isSelected: selectedLabel == label) {
+                        selectedLabel = label
                     }
                 }
-                .pickerStyle(.segmented)
             }
+            .padding(.horizontal)
+            .padding(.top, 8)
         }
-        .padding(.horizontal)
-        .padding(.top, 8)
     }
 
-    private var availableDayPlans: [DayPlan] {
-        splitPlan.week(for: selectedWeekIndex)?.sortedDayPlans ?? []
+    private func filterChip(label: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.subheadline.weight(.medium))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule().fill(isSelected ? Color.accentColor : Color(uiColor: .tertiarySystemFill))
+                )
+                .foregroundStyle(isSelected ? .white : .primary)
+        }
+        .buttonStyle(.plain)
     }
 
     private var filteredSessions: [WorkoutSession] {
-        sessions.filter { session in
-            session.weekIndex == selectedWeekIndex && session.weekday == selectedWeekday
+        guard let label = selectedLabel else {
+            return Array(sessions)
         }
-    }
-
-    private func ensureValidDaySelection() {
-        if selectedWeekIndex == 0 {
-            selectedWeekIndex = splitPlan.sortedWeeks.first?.weekIndex ?? 1
-        }
-
-        guard let firstDay = availableDayPlans.first else { return }
-        if !availableDayPlans.contains(where: { $0.weekday == selectedWeekday }) {
-            selectedWeekday = firstDay.weekday
-        }
+        return sessions.filter { $0.dayLabelSnapshot == label }
     }
 
     private func sessionSubtitle(for session: WorkoutSession) -> String {

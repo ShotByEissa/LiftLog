@@ -11,8 +11,6 @@ struct SessionDetailView: View {
         List {
             Section("Session") {
                 LabeledContent("Date", value: session.date.formatted(date: .abbreviated, time: .shortened))
-                LabeledContent("Week", value: "\(session.weekIndex)")
-                LabeledContent("Day", value: session.weekday.fullName)
                 LabeledContent("Label", value: session.dayLabelSnapshot)
             }
 

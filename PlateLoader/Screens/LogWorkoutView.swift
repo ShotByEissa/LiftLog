@@ -6,8 +6,7 @@ struct LogWorkoutView: View {
     @Environment(\.modelContext) private var modelContext
 
     var workout: WorkoutTemplate
-    var dayPlan: DayPlan
-    var weekIndex: Int
+    var workoutDay: WorkoutDay
     var appConfig: AppConfig
 
     @State private var setDrafts: [SetDraft]
@@ -24,10 +23,9 @@ struct LogWorkoutView: View {
     @State private var showPlanSyncAlert = false
     @State private var pendingSaveContext: PendingSaveContext?
 
-    init(workout: WorkoutTemplate, dayPlan: DayPlan, weekIndex: Int, appConfig: AppConfig) {
+    init(workout: WorkoutTemplate, workoutDay: WorkoutDay, appConfig: AppConfig) {
         self.workout = workout
-        self.dayPlan = dayPlan
-        self.weekIndex = weekIndex
+        self.workoutDay = workoutDay
         self.appConfig = appConfig
 
         let plateIDs = appConfig.plateCatalog
@@ -49,7 +47,7 @@ struct LogWorkoutView: View {
                         Text(workout.name)
                             .font(.title2.bold())
 
-                        Text("\(dayPlan.label) • \(sessionDate.formatted(date: .abbreviated, time: .shortened))")
+                        Text("\(workoutDay.label) • \(sessionDate.formatted(date: .abbreviated, time: .shortened))")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
 
@@ -781,8 +779,7 @@ struct LogWorkoutView: View {
         let sessions = try modelContext.fetch(descriptor)
 
         let existingSession = sessions.first { session in
-            session.weekIndex == weekIndex
-                && session.weekday == dayPlan.weekday
+            session.dayLabelSnapshot == workoutDay.label
                 && (
                     calendar.isDate(session.sessionDayStart, inSameDayAs: sessionDayStart)
                         || calendar.isDate(session.date, inSameDayAs: sessionDayStart)
@@ -837,9 +834,7 @@ struct LogWorkoutView: View {
             session = WorkoutSession(
                 date: context.date,
                 sessionDayStart: context.sessionDayStart,
-                weekIndex: weekIndex,
-                weekday: dayPlan.weekday,
-                dayLabelSnapshot: dayPlan.label,
+                dayLabelSnapshot: workoutDay.label,
                 entries: []
             )
             modelContext.insert(session)
@@ -863,7 +858,7 @@ struct LogWorkoutView: View {
         session.entries.append(entry)
         session.date = context.date
         session.sessionDayStart = context.sessionDayStart
-        session.dayLabelSnapshot = dayPlan.label
+        session.dayLabelSnapshot = workoutDay.label
 
         if !workout.weightType.usesPlatePicker {
             workout.preferredUnit = context.unit

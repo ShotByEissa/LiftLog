@@ -6,10 +6,6 @@ struct SettingsView: View {
     @AppStorage("profileFirstName") private var profileFirstName: String = ""
 
     var appConfig: AppConfig
-    var splitPlan: SplitPlan
-
-    @State private var splitLengthWeeksDraft: Int
-    @State private var weekDrafts: [WeekEditDraft]
 
     @State private var barWeightUnitDraft: WeightUnit
     @State private var barWeightValueText: String
@@ -18,14 +14,14 @@ struct SettingsView: View {
 
     @State private var errorMessage: String?
     @State private var showFactoryResetConfirm = false
-    @State private var didHydrateWeekDrafts = false
 
-    init(appConfig: AppConfig, splitPlan: SplitPlan) {
+    @State private var dayToRename: WorkoutDay?
+    @State private var renameValue: String = ""
+    @State private var showAddDay = false
+    @State private var newDayName: String = ""
+
+    init(appConfig: AppConfig) {
         self.appConfig = appConfig
-        self.splitPlan = splitPlan
-
-        _splitLengthWeeksDraft = State(initialValue: appConfig.splitLengthWeeks)
-        _weekDrafts = State(initialValue: WeekEditDraft.defaults(splitLength: appConfig.splitLengthWeeks))
 
         _barWeightUnitDraft = State(initialValue: appConfig.barWeightUnit)
         _barWeightValueText = State(initialValue: appConfig.barWeightValue.prettyWeight)
@@ -45,41 +41,30 @@ struct SettingsView: View {
                     .textInputAutocapitalization(.words)
             }
 
-            Section("Split Length") {
-                Stepper("\(splitLengthWeeksDraft) week split", value: $splitLengthWeeksDraft, in: 1...4)
-            }
+            Section("Workout Days") {
+                ForEach(appConfig.sortedWorkoutDays, id: \.id) { day in
+                    HStack {
+                        Text(day.label)
+                        Spacer()
+                        Text("\(day.activeSortedWorkouts.count) exercises")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                        Button("Rename") {
+                            dayToRename = day
+                            renameValue = day.label
+                        }
 
-            ForEach(1...splitLengthWeeksDraft, id: \.self) { weekIndex in
-                if let draftIndex = weekDrafts.firstIndex(where: { $0.weekIndex == weekIndex }) {
-                    Section("Week \(weekIndex)") {
-                        ForEach(weekDrafts[draftIndex].days.indices, id: \.self) { dayIndex in
-                            VStack(alignment: .leading, spacing: 8) {
-                                Toggle(
-                                    weekDrafts[draftIndex].days[dayIndex].weekday.fullName,
-                                    isOn: Binding(
-                                        get: { weekDrafts[draftIndex].days[dayIndex].isSelected },
-                                        set: { isSelected in
-                                            weekDrafts[draftIndex].days[dayIndex].isSelected = isSelected
-                                            if !isSelected {
-                                                weekDrafts[draftIndex].days[dayIndex].label = ""
-                                            }
-                                        }
-                                    )
-                                )
-
-                                if weekDrafts[draftIndex].days[dayIndex].isSelected {
-                                    TextField(
-                                        "Label",
-                                        text: Binding(
-                                            get: { weekDrafts[draftIndex].days[dayIndex].label },
-                                            set: { weekDrafts[draftIndex].days[dayIndex].label = $0 }
-                                        )
-                                    )
-                                    .textInputAutocapitalization(.words)
-                                }
-                            }
+                        Button("Delete", role: .destructive) {
+                            deleteWorkoutDay(day)
                         }
                     }
+                }
+                .onMove(perform: moveWorkoutDays)
+
+                Button("Add Workout Day") {
+                    showAddDay = true
                 }
             }
 
@@ -143,8 +128,34 @@ struct SettingsView: View {
         } message: {
             Text("This clears all setup, workouts, and history from local storage.")
         }
-        .onChange(of: splitLengthWeeksDraft) { _, newValue in
-            syncWeekDrafts(to: newValue)
+        .alert("Add Workout Day", isPresented: $showAddDay) {
+            TextField("Day name", text: $newDayName)
+            Button("Cancel", role: .cancel) {
+                newDayName = ""
+            }
+            Button("Add") {
+                addWorkoutDay()
+            }
+        } message: {
+            Text("Give your workout day a name.")
+        }
+        .alert("Rename Workout Day", isPresented: Binding(
+            get: { dayToRename != nil },
+            set: { isPresented in
+                if !isPresented {
+                    dayToRename = nil
+                    renameValue = ""
+                }
+            }
+        )) {
+            TextField("Day name", text: $renameValue)
+            Button("Cancel", role: .cancel) {
+                dayToRename = nil
+                renameValue = ""
+            }
+            Button("Save") {
+                saveRenameDay()
+            }
         }
         .onChange(of: barWeightUnitDraft) { oldValue, newValue in
             guard oldValue != newValue else { return }
@@ -157,23 +168,57 @@ struct SettingsView: View {
                 barWeightValueText = newValue == .lb ? "45" : "20"
             }
         }
-        .onAppear {
-            hydrateWeekDraftsIfNeeded()
-        }
     }
 
-    private func syncWeekDrafts(to requestedLength: Int) {
-        let target = AppConfig.clampSplitLength(requestedLength)
-        splitLengthWeeksDraft = target
-
-        if weekDrafts.count > target {
-            weekDrafts = Array(weekDrafts.prefix(target))
-        } else if weekDrafts.count < target {
-            let start = weekDrafts.count + 1
-            for index in start...target {
-                weekDrafts.append(WeekEditDraft.makeDefault(weekIndex: index))
-            }
+    private func moveWorkoutDays(from source: IndexSet, to destination: Int) {
+        var days = appConfig.sortedWorkoutDays
+        days.move(fromOffsets: source, toOffset: destination)
+        for (index, day) in days.enumerated() {
+            day.sortIndex = index
         }
+        save()
+    }
+
+    private func deleteWorkoutDay(_ day: WorkoutDay) {
+        appConfig.workoutDays.removeAll { $0.id == day.id }
+        modelContext.delete(day)
+        for (index, d) in appConfig.sortedWorkoutDays.enumerated() {
+            d.sortIndex = index
+        }
+        save()
+    }
+
+    private func addWorkoutDay() {
+        let trimmed = newDayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            newDayName = ""
+            return
+        }
+
+        if appConfig.workoutDays.contains(where: {
+            $0.label.caseInsensitiveCompare(trimmed) == .orderedSame
+        }) {
+            errorMessage = "A workout day with that name already exists."
+            newDayName = ""
+            return
+        }
+
+        let nextIndex = appConfig.workoutDays.count
+        let day = WorkoutDay(label: trimmed, sortIndex: nextIndex)
+        appConfig.workoutDays.append(day)
+        newDayName = ""
+        save()
+    }
+
+    private func saveRenameDay() {
+        guard let day = dayToRename else { return }
+        let trimmed = renameValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            day.label = trimmed
+            save()
+        }
+        dayToRename = nil
+        renameValue = ""
     }
 
     private func deletePlateDrafts(at offsets: IndexSet) {
@@ -203,19 +248,6 @@ struct SettingsView: View {
         customPlateText = ""
     }
 
-    private func hydrateWeekDraftsIfNeeded() {
-        guard !didHydrateWeekDrafts else { return }
-        didHydrateWeekDrafts = true
-
-        do {
-            let fetchedPlans = try modelContext.fetch(FetchDescriptor<SplitPlan>())
-            guard let currentPlan = fetchedPlans.first else { return }
-            weekDrafts = WeekEditDraft.from(splitPlan: currentPlan, splitLength: splitLengthWeeksDraft)
-        } catch {
-            // Keep defaults if hydration fails.
-        }
-    }
-
     private func saveChanges() {
         guard let barWeight = Double(barWeightValueText), barWeight >= 0 else {
             errorMessage = "Bar weight must be a number >= 0."
@@ -227,25 +259,12 @@ struct SettingsView: View {
             return
         }
 
-        for weekDraft in weekDrafts.prefix(splitLengthWeeksDraft) {
-            if weekDraft.days.filter(\.isSelected).isEmpty {
-                errorMessage = "Each week must have at least one selected day."
-                return
-            }
-        }
-
-        appConfig.splitLengthWeeks = splitLengthWeeksDraft
         appConfig.barWeightUnit = barWeightUnitDraft
         appConfig.barWeightValue = barWeight
 
         rewritePlateCatalog()
-        applySplitDraftsToPlan()
 
-        do {
-            try modelContext.save()
-        } catch {
-            errorMessage = "Could not save settings: \(error.localizedDescription)"
-        }
+        save()
     }
 
     private func rewritePlateCatalog() {
@@ -263,57 +282,13 @@ struct SettingsView: View {
         }
     }
 
-    private func applySplitDraftsToPlan() {
-        // Remove any weeks outside the chosen split length.
-        let weeksToRemove = splitPlan.weeks.filter { $0.weekIndex > splitLengthWeeksDraft }
-        for week in weeksToRemove {
-            splitPlan.weeks.removeAll(where: { $0.weekIndex == week.weekIndex })
-            modelContext.delete(week)
-        }
-
-        for weekIndex in 1...splitLengthWeeksDraft {
-            guard let draft = weekDrafts.first(where: { $0.weekIndex == weekIndex }) else { continue }
-
-            let week = splitPlan.week(for: weekIndex) ?? {
-                let newWeek = PlanWeek(weekIndex: weekIndex)
-                splitPlan.weeks.append(newWeek)
-                return newWeek
-            }()
-
-            let selectedDays = draft.days.filter(\.isSelected)
-
-            let daysToRemove = week.dayPlans.filter { existingDay in
-                !selectedDays.contains(where: { $0.weekday == existingDay.weekday })
-            }
-            for existingDay in daysToRemove {
-                week.dayPlans.removeAll(where: { $0.weekday == existingDay.weekday })
-                modelContext.delete(existingDay)
-            }
-
-            for selected in selectedDays {
-                let cleanLabel = selected.label.trimmingCharacters(in: .whitespacesAndNewlines)
-                let finalLabel = cleanLabel.isEmpty ? selected.weekday.fullName : cleanLabel
-
-                if let existing = week.dayPlans.first(where: { $0.weekday == selected.weekday }) {
-                    existing.label = finalLabel
-                } else {
-                    week.dayPlans.append(DayPlan(weekday: selected.weekday, label: finalLabel))
-                }
-            }
-        }
-    }
-
     private func factoryReset() {
         do {
             let sessions = try modelContext.fetch(FetchDescriptor<WorkoutSession>())
-            let plans = try modelContext.fetch(FetchDescriptor<SplitPlan>())
             let configs = try modelContext.fetch(FetchDescriptor<AppConfig>())
 
             for config in configs {
                 modelContext.delete(config)
-            }
-            for plan in plans {
-                modelContext.delete(plan)
             }
             for session in sessions {
                 modelContext.delete(session)
@@ -324,51 +299,14 @@ struct SettingsView: View {
             errorMessage = "Factory reset failed: \(error.localizedDescription)"
         }
     }
-}
 
-private struct WeekEditDraft: Identifiable {
-    let id = UUID()
-    var weekIndex: Int
-    var days: [DayEditDraft]
-
-    static func defaults(splitLength: Int) -> [WeekEditDraft] {
-        (1...max(1, splitLength)).map { makeDefault(weekIndex: $0) }
-    }
-
-    static func makeDefault(weekIndex: Int) -> WeekEditDraft {
-        WeekEditDraft(
-            weekIndex: weekIndex,
-            days: Weekday.allCases.map {
-                DayEditDraft(weekday: $0, isSelected: false, label: "")
-            }
-        )
-    }
-
-    static func from(splitPlan: SplitPlan, splitLength: Int) -> [WeekEditDraft] {
-        (1...splitLength).map { weekIndex in
-            let existingWeek = splitPlan.week(for: weekIndex)
-            let dayMap: [Weekday: DayPlan] = Dictionary(
-                uniqueKeysWithValues: (existingWeek?.dayPlans ?? []).map { ($0.weekday, $0) }
-            )
-
-            return WeekEditDraft(
-                weekIndex: weekIndex,
-                days: Weekday.allCases.map { weekday in
-                    if let dayPlan = dayMap[weekday] {
-                        return DayEditDraft(weekday: weekday, isSelected: true, label: dayPlan.label)
-                    }
-                    return DayEditDraft(weekday: weekday, isSelected: false, label: "")
-                }
-            )
+    private func save() {
+        do {
+            try modelContext.save()
+        } catch {
+            errorMessage = "Could not save settings: \(error.localizedDescription)"
         }
     }
-}
-
-private struct DayEditDraft: Identifiable {
-    let id = UUID()
-    var weekday: Weekday
-    var isSelected: Bool
-    var label: String
 }
 
 private struct EditablePlate: Identifiable {

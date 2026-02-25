@@ -3,12 +3,11 @@ import SwiftUI
 
 struct RootView: View {
     @Query(sort: \AppConfig.createdAt) private var appConfigs: [AppConfig]
-    @Query private var splitPlans: [SplitPlan]
 
     var body: some View {
         Group {
-            if let config = appConfigs.first, let splitPlan = splitPlans.first {
-                MainTabView(appConfig: config, splitPlan: splitPlan)
+            if let config = appConfigs.first {
+                MainTabView(appConfig: config)
             } else {
                 SetupFlowView()
             }
@@ -18,12 +17,11 @@ struct RootView: View {
 
 private struct MainTabView: View {
     var appConfig: AppConfig
-    var splitPlan: SplitPlan
 
     var body: some View {
         TabView {
             NavigationStack {
-                WorkoutDayView(appConfig: appConfig, splitPlan: splitPlan)
+                WorkoutDayView(appConfig: appConfig)
             }
             .tabItem {
                 Label("Workout", systemImage: "figure.strengthtraining.traditional")
@@ -37,14 +35,14 @@ private struct MainTabView: View {
             }
 
             NavigationStack {
-                HistoryView(splitPlan: splitPlan)
+                HistoryView()
             }
             .tabItem {
                 Label("History", systemImage: "clock.arrow.circlepath")
             }
 
             NavigationStack {
-                SettingsView(appConfig: appConfig, splitPlan: splitPlan)
+                SettingsView(appConfig: appConfig)
             }
             .tabItem {
                 Label("Settings", systemImage: "gearshape")
@@ -57,9 +55,7 @@ private struct MainTabView: View {
     RootView()
         .modelContainer(for: [
             AppConfig.self,
-            SplitPlan.self,
-            PlanWeek.self,
-            DayPlan.self,
+            WorkoutDay.self,
             WorkoutTemplate.self,
             WorkoutSession.self,
             SessionEntry.self,

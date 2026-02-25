@@ -4,9 +4,7 @@ enum PersistenceController {
     static let sharedModelContainer: ModelContainer = {
         let schema = Schema([
             AppConfig.self,
-            SplitPlan.self,
-            PlanWeek.self,
-            DayPlan.self,
+            WorkoutDay.self,
             WorkoutTemplate.self,
             WorkoutSession.self,
             SessionEntry.self,
